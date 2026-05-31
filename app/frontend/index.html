@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Заметки</title>
+    <style>
+        /* Сброс отступов и включение border-box для всех элементов,
+           чтобы padding и border учитывались в общей ширине элемента */
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body { font-family: system-ui, sans-serif; background: #f5f5f5; color: #333; }
+
+        /* Контейнер ограничивает ширину содержимого и центрирует его на страниц�� */
+        .container { max-width: 640px; margin: 2rem auto; padding: 0 1rem; }
+
+        h1 { margin-bottom: 1.5rem; }
+
+        /* Форма добавления заметки — вертикальная раскладка с отступами между эл��ментами */
+        .form { display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 2rem; }
+        .form input, .form textarea {
+            padding: 0.5rem; border: 1px solid #ccc; border-radius: 4px; font-size: 1rem;
+        }
+        .form textarea { resize: vertical; min-height: 60px; }
+        .form button {
+            align-self: flex-start; padding: 0.5rem 1.2rem;
+            background: #0066cc; color: #fff; border: none; border-radius: 4px;
+            font-size: 1rem; cursor: pointer;
+        }
+        .form button:hover { background: #0052a3; }
+
+        /* Карточка заметки */
+        .note {
+            background: #fff; border: 1px solid #ddd; border-radius: 4px;
+            padding: 1rem; margin-bottom: 0.75rem; position: relative;
+        }
+        .note h3 { margin-bottom: 0.25rem; }
+        .note p { color: #555; font-size: 0.95rem; }
+        .note time { display: block; margin-top: 0.5rem; font-size: 0.8rem; color: #999; }
+
+        /* Кнопка удаления — расположена в правом верхнем углу карточки */
+        .note button {
+            position: absolute; top: 0.75rem; right: 0.75rem;
+            background: none; border: none; color: #c00; cursor: pointer; font-size: 1.1rem;
+        }
+
+        /* Индикатор состояния подключения к API — зеленый (ok) или красный (err) */
+        .status { padding: 0.5rem; margin-bottom: 1rem; border-radius: 4px; font-size: 0.9rem; }
+        .status.ok { background: #e6f4ea; color: #1a7f37; }
+        .status.err { background: #fde8e8; color: #c00; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Заметки</h1>
+
+        <!-- Индикатор состояния подключения к backend API.
+             Скрыт по умолчанию (display:none), становится видимым после
+             первой проверки состояния в функции checkHealth(). -->
+        <div id="status" class="status" style="display:none;"></div>
+
+        <!-- Форма создания новой заметки.
+             При нажатии кнопки «Добавить» вызывается функция createNote(),
+             которая отправляет POST-запрос к API. -->
+        <div class="form">
+            <input type="text" id="title" placeholder="Заголовок">
+            <textarea id="content" placeholder="Текст заметки"></textarea>
+            <button onclick="createNote()">Добавить</button>
+        </div>
+
+        <!-- Контейнер для списка заметок.
+             Заполняется динамически функцией loadNotes(). -->
+        <div id="notes"></div>
+    </div>
+
+    <script>
+        // Базовый путь к API. Используется относительный путь "/api",
+        // потому что nginx (frontend-контейнер) проксирует все запросы
+        // к /api/ на backend-контейнер. Благодаря этому браузер отправляет
+        // запросы на тот же хост и порт, с которого загружена страница,
+        // а nginx перенаправляет их на backend. Это устраняет проблемы
+        // с CORS в production-среде и упрощает конфигурацию.
+        const API = "/api";
+
+        // =====================================================================
+        // checkHealth() — проверка доступности backend API
+        // =====================================================================
+        // Отправляет GET-запрос к /api/health и отображает результат
+        // в индикаторе состояния. Вызывается один раз при загрузке страницы.
+        // Позволяет пользователю сразу увидеть, подключен ли frontend к API.
+        async function checkHealth() {
+            const el = document.getElementById("status");
+            try {
+                const res = await fetch(`${API}/health`);
+                const data = await res.json();
+                if (data.status === "ok") {
+                    el.textContent = "API: подключено";
+                    el.className = "status ok";
+                } else {
+                    // API ответил, но сообщил об ошибке (например, база данных недоступна)
+                    el.textContent = "API: ошибка — " + (data.detail || "неизвестно");
+                    el.className = "status err";
+                }
+            } catch (e) {
+                // Запрос не дошел до API (сервер не запущен, сеть недоступна и т.д.)
+                el.textContent = "API: недоступен";
+                el.className = "status err";
+            }
+            // Делаем индикатор видимым после получения результата
+            el.style.display = "block";
+        }
+
+        // =====================================================================
+        // loadNotes() — загрузка и отображение списка заметок
+        // =====================================================================
+        // Отправляет GET-запрос к /api/notes, получает массив заметок в формате
+        // JSON и формирует HTML-разметку для каждой заметки. Результат вставляется
+        // в контейнер #notes. Вызывается при загрузке страницы и после каждого
+        // создания или удаления заметки, чтобы список всегда был актуальн��м.
+        async function loadNotes() {
+            try {
+                const res = await fetch(`${API}/notes`);
+                const notes = await res.json();
+                const container = document.getElementById("notes");
+
+                // Для каждой заметки из массива формируем HTML-карточку.
+                // Функция esc() используется для экранирования пользовательского
+                // ввода, чтобы предотвратить XSS-атаки (подробнее — ниже).
+                container.innerHTML = notes.map(n => `
+                    <div class="note">
+                        <button onclick="deleteNote(${n.id})">&times;</button>
+                        <h3>${esc(n.title)}</h3>
+                        <p>${esc(n.content)}</p>
+                        <time>${new Date(n.created_at).toLocaleString("ru-RU")}</time>
+                    </div>
+                `).join("");
+            } catch (e) {
+                console.error("Failed to load notes:", e);
+            }
+        }
+
+        // =====================================================================
+        // createNote() — создание новой заметки
+        // =====================================================================
+        // Считывает значения полей формы, отправляет POST-запрос к /api/notes
+        // с JSON-телом, очищает форму и перезагружает список заметок.
+        async function createNote() {
+            const title = document.getElementById("title").value.trim();
+            const content = document.getElementById("content").value.trim();
+
+            // Если заголовок пуст — ничего не отправляем
+            if (!title) return;
+
+            // Отправляем POST-запрос с JSON-телом. Заголовок Content-Type
+            // сообщает серверу, что тело запроса содержит данные в формате JSON.
+            await fetch(`${API}/notes`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ title, content }),
+            });
+
+            // Очищаем поля формы после успешной отправки
+            document.getElementById("title").value = "";
+            document.getElementById("content").value = "";
+
+            // Перезагружаем список, чтобы отобразить новую заметку
+            loadNotes();
+        }
+
+        // =====================================================================
+        // deleteNote(id) — удаление заметки по идентификатору
+        // =====================================================================
+        // Отправляет DELETE-запрос к /api/notes/:id и перезагружает список.
+        async function deleteNote(id) {
+            await fetch(`${API}/notes/${id}`, { method: "DELETE" });
+            loadNotes();
+        }
+
+        // =====================================================================
+        // esc(s) — экранирование строки для безопасной вставки в HTML
+        // =====================================================================
+        // Предотвращает XSS (Cross-Site Scripting): если пользователь введет
+        // в заголовок или текст заметки HTML-теги или JavaScript-код,
+        // функция преобразует спецсимволы (< > & " ') в безопасные
+        // HTML-сущности (&lt; &gt; &amp; и т.д.), чтобы браузер отобразил
+        // их как текст, а не интерпретировал как разметку или код.
+        //
+        // Механизм: создается временный DOM-элемент (div), в его свойство
+        // textContent записывается исходная строка (при этом браузер
+        // автоматически экранирует спецсимволы), а затем innerHTML
+        // возвращает уже безопасную строку.
+        function esc(s) {
+            const d = document.createElement("div");
+            d.textContent = s;
+            return d.innerHTML;
+        }
+
+        // =====================================================================
+        // Запуск при загрузке страницы
+        // =====================================================================
+        // Проверяем состояние API и загружаем список заметок.
+        // Оба вызова выполняются параллельно (каждый — независимый async-вызов).
+        checkHealth();
+        loadNotes();
+    </script>
+</body>
+</html>

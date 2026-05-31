@@ -1,0 +1,82 @@
+services:
+  db:
+    image: postgres:17-alpine
+    container_name: notes-db
+
+    environment:
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+    networks:
+      - notes-network
+
+    restart: unless-stopped
+
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+
+  backend:
+    build:
+      context: ./app/backend
+      dockerfile: ../../docker/backend/Dockerfile
+
+    container_name: notes-backend
+
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+
+    depends_on:
+      db:
+        condition: service_started
+
+    networks:
+      - notes-network
+
+    restart: unless-stopped
+
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+
+  frontend:
+    build:
+      context: ./app/frontend
+      dockerfile: ../../docker/frontend/Dockerfile
+
+    container_name: notes-frontend
+
+    ports:
+      - "80:80"
+
+    depends_on:
+      - backend
+
+    networks:
+      - notes-network
+
+    restart: unless-stopped
+
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 128M
+
+volumes:
+  postgres_data:
+
+networks:
+  notes-network:
