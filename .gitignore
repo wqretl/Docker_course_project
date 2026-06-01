@@ -1,0 +1,19 @@
+# Операционная система
+.DS_Store
+Thumbs.db
+
+# Редакторы и IDE
+.vscode/
+.idea/
+*.swp
+*~
+
+# Зависимости и сборки (для курсов с Node.js/фронтендом)
+node_modules/
+dist/
+build/
+.cache/
+
+# Переменные окружения — часто содержат секреты
+.env
+.env.local
